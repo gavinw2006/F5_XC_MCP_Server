@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AppConfig } from "../types.js";
 import { F5XcClient, handleApiError } from "../services/f5-xc-client.js";
+import { TerraformRunner, VOLTERRA_RESOURCE_TYPES } from "../services/terraform-runner.js";
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, CHARACTER_LIMIT } from "../constants.js";
 
 const PaginationSchema = {
@@ -33,7 +34,16 @@ function truncate(text: string): string {
   return text.slice(0, CHARACTER_LIMIT) + `\n\n[Response truncated at ${CHARACTER_LIMIT} characters. Use page_start/page_limit to paginate.]`;
 }
 
+function buildTerraformFallback(tf: TerraformRunner, resourceType: string, name: string, namespace: string, extraAttrs?: Record<string, unknown>): string {
+  const tfType = VOLTERRA_RESOURCE_TYPES[resourceType] ?? `volterra_${resourceType}`;
+  const tfLabel = name.replace(/[^a-zA-Z0-9_]/g, "_");
+  const attrs: Record<string, unknown> = { name, namespace, ...(extraAttrs ?? {}) };
+  const hcl = tf.generateProviderHcl() + "\n" + tf.generateResourceHcl(tfType, tfLabel, attrs);
+  return `\n\n── Terraform fallback ─────────────────────────────────────────────────────\nThe REST API does not support this operation. Use xc_tf_apply to apply via Terraform:\n\n\`\`\`hcl\n${hcl}\`\`\`\nOr call: xc_tf_apply(resource_type="${resourceType}", name="${name}", namespace="${namespace}"${extraAttrs ? ", attrs=" + JSON.stringify(extraAttrs) : ""})`;
+}
+
 export function registerIdentityTools(server: McpServer, client: F5XcClient, config: AppConfig): void {
+  const tf = new TerraformRunner(config);
 
   // ── Namespaces ────────────────────────────────────────────────────────────
 
@@ -219,7 +229,9 @@ Common role values: ves-io-admin-role, ves-io-operator-role, ves-io-viewer-role`
         });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result as Record<string, unknown> };
       } catch (err) {
-        return { content: [{ type: "text", text: handleApiError(err) }] };
+        const apiError = handleApiError(err);
+        const fallback = buildTerraformFallback(tf, "user_group", name, namespace, spec as Record<string, unknown> | undefined);
+        return { content: [{ type: "text", text: apiError + fallback }] };
       }
     },
   );
@@ -253,7 +265,9 @@ Args:
         });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result as Record<string, unknown> };
       } catch (err) {
-        return { content: [{ type: "text", text: handleApiError(err) }] };
+        const apiError = handleApiError(err);
+        const fallback = buildTerraformFallback(tf, "user_group", name, namespace, spec as Record<string, unknown> | undefined);
+        return { content: [{ type: "text", text: apiError + fallback }] };
       }
     },
   );
@@ -275,7 +289,9 @@ Args:
         const result = await client.request({ method: "DELETE", path: `/api/web/namespaces/${encodeURIComponent(namespace)}/user_groups/${encodeURIComponent(name)}`, dryRun });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result as Record<string, unknown> };
       } catch (err) {
-        return { content: [{ type: "text", text: handleApiError(err) }] };
+        const apiError = handleApiError(err);
+        const fallback = buildTerraformFallback(tf, "user_group", name, namespace);
+        return { content: [{ type: "text", text: apiError + fallback }] };
       }
     },
   );

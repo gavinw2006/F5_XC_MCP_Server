@@ -8,6 +8,10 @@ export interface AppConfig {
   keyPath?: string;
   defaultNamespace: string;
   dryRun: boolean;
+  // Terraform fallback
+  tfBin?: string;
+  p12Path?: string;
+  p12Password?: string;
 }
 
 export interface RequestOptions {

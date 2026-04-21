@@ -52,6 +52,9 @@ src/
 | `F5_XC_DEFAULT_NAMESPACE` | Default namespace for operations | `system` |
 | `F5_XC_DRY_RUN` | Set to `false` to enable live API calls | `true` |
 | `XC_DOCS_DIR` | Path to local docs directory | `./docs` |
+| `F5_XC_TF_BIN` | Path to terraform binary | `terraform` (system PATH) |
+| `F5_XC_P12_PATH` | Path to `.p12` certificate for Terraform auth | — |
+| `F5_XC_P12_PASSWORD` | Password for the `.p12` file | — |
 
 Store these in a `.env` file (not committed).
 

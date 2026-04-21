@@ -1,6 +1,8 @@
 # F5 XC MCP Server
 
-An MCP (Model Context Protocol) server that acts as an F5 Distributed Cloud expert — translating natural language commands from Claude Code or GitHub Copilot into F5 XC API calls.
+An MCP (Model Context Protocol) server that acts as an F5 Distributed Cloud expert — translating natural language commands from Claude Code or GitHub Copilot into F5 XC API calls. When REST API operations are unavailable (e.g. user group management), tools automatically fall back to generating and applying Terraform HCL via the `volterraedge/volterra` provider.
+
+F5 XC API reference: https://docs.cloud.f5.com/docs-v2/api
 
 ## Use Cases (v1.0)
 
@@ -10,8 +12,7 @@ An MCP (Model Context Protocol) server that acts as an F5 Distributed Cloud expe
 | UC-2 | HTTP Load Balancer and Origin Pool CRUD |
 | UC-3 | WAF (App Firewalls), Service Policies, Bot Defense, DDoS rules |
 | UC-4 | API Discovery, API Security (API Definitions, App API Groups) |
-
-F5 XC API reference: https://docs.cloud.f5.com/docs-v2/api
+| TF | Terraform fallback — generate & apply HCL for any F5 XC resource |
 
 ---
 
@@ -89,12 +90,12 @@ Add to your Claude Code MCP config (`~/.claude.json` or project `.claude/setting
 Deployable on Ubuntu VM (AWS/Azure/GCP/Raspberry Pi):
 
 ```bash
-# Install Node 18+
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
-sudo apt install -y nodejs
+# Install Node 18+ (via nvm recommended)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+nvm install 20 && nvm use 20
 
 # Clone and build
-git clone <repo-url> F5_XC_MCP_Server
+git clone https://github.com/gavinw2006/F5_XC_MCP_Server
 cd F5_XC_MCP_Server
 npm install && npm run build
 
@@ -108,6 +109,8 @@ TRANSPORT=http PORT=3000 npm start
 Health check endpoint: `GET /health`  
 MCP endpoint: `POST /mcp`
 
+See `f5-xc-mcp.service` for the systemd unit file example.
+
 ---
 
 ## Available Tools
@@ -115,7 +118,7 @@ MCP endpoint: `POST /mcp`
 ### Status
 | Tool | Description |
 |---|---|
-| `xc_server_status` | Show configuration and dry-run state |
+| `xc_server_status` | Show configuration, auth method, dry-run state, and Terraform status |
 
 ### Identity & Access (UC-1)
 | Tool | Description |
@@ -126,8 +129,8 @@ MCP endpoint: `POST /mcp`
 | `xc_delete_namespace` | Delete a namespace |
 | `xc_list_user_groups` | List user groups |
 | `xc_get_user_group` | Get user group details |
-| `xc_create_user_group` | Create user group with role bindings |
-| `xc_update_user_group` | Update user group |
+| `xc_create_user_group` | Create user group — REST first, Terraform HCL fallback on failure |
+| `xc_update_user_group` | Update user group — REST first, Terraform HCL fallback on failure |
 | `xc_delete_user_group` | Delete user group |
 | `xc_list_api_credentials` | List API credentials (audit) |
 
@@ -170,7 +173,47 @@ MCP endpoint: `POST /mcp`
 | `xc_list_app_api_groups` | List API endpoint groups |
 | `xc_get_app_api_group` | Get API endpoint group |
 | `xc_create_app_api_group` | Create API endpoint group |
-| `xc_raw_request` | Raw API request (escape hatch) |
+| `xc_raw_request` | Raw API request (escape hatch for any F5 XC endpoint) |
+
+### Terraform Fallback
+| Tool | Description |
+|---|---|
+| `xc_tf_generate_hcl` | Generate Terraform HCL for any F5 XC resource (read-only, no execution) |
+| `xc_tf_plan` | Run `terraform plan` — safe preview of what would change |
+| `xc_tf_apply` | Run `terraform apply` to create or update a resource |
+| `xc_tf_destroy` | Run `terraform destroy` to delete a resource |
+
+**Supported Terraform resource types:**  
+`namespace`, `user_group`, `http_loadbalancer`, `origin_pool`, `app_firewall`, `service_policy`, `api_definition`, `app_api_group`, `virtual_network`, `virtual_host`, `healthcheck`
+
+---
+
+## Authentication
+
+### REST API (choose one)
+- **API token**: set `F5_XC_API_TOKEN`
+- **mTLS**: set `F5_XC_CERT_PATH` + `F5_XC_KEY_PATH` (PEM files)
+
+### Terraform Fallback (optional)
+The `volterraedge/volterra` Terraform provider requires certificate auth. Add to `.env`:
+
+```bash
+# Option A: reuse PEM files already configured for mTLS
+F5_XC_CERT_PATH=/path/to/cert.pem
+F5_XC_KEY_PATH=/path/to/key.pem
+
+# Option B: point to the .p12 credential file from F5 XC Console
+F5_XC_P12_PATH=/path/to/creds.p12
+F5_XC_P12_PASSWORD=your-p12-password
+```
+
+To extract PEM files from a `.p12`:
+```bash
+openssl pkcs12 -legacy -in creds.p12 -nokeys -clcerts -out cert.pem
+openssl pkcs12 -legacy -in creds.p12 -nocerts -nodes -out key.pem
+```
+
+Also ensure `terraform` is installed on the server (`F5_XC_TF_BIN` to override path).
 
 ---
 
@@ -181,10 +224,27 @@ MCP endpoint: `POST /mcp`
 | `F5_XC_TENANT` | — | Tenant name; builds `https://{tenant}.console.ves.volterra.io` |
 | `F5_XC_BASE_URL` | — | Override base URL (takes precedence over tenant) |
 | `F5_XC_API_TOKEN` | — | API token from F5 XC Console |
+| `F5_XC_CERT_PATH` | — | PEM certificate path (mTLS + Terraform auth) |
+| `F5_XC_KEY_PATH` | — | PEM private key path (mTLS + Terraform auth) |
 | `F5_XC_DEFAULT_NAMESPACE` | `system` | Default namespace for tools |
 | `F5_XC_DRY_RUN` | `true` | `false` to enable live API calls |
 | `TRANSPORT` | `stdio` | `http` for remote HTTP mode |
 | `PORT` | `3000` | HTTP port when `TRANSPORT=http` |
+| `F5_XC_TF_BIN` | `terraform` | Path to terraform binary |
+| `F5_XC_P12_PATH` | — | `.p12` credential file for Terraform auth |
+| `F5_XC_P12_PASSWORD` | — | Password for the `.p12` file |
+
+---
+
+## F5 XC REST API Limitations
+
+The F5 XC REST API does **not** expose write operations for user/group management — `POST`/`PUT`/`DELETE` on `/api/web/namespaces/system/user_groups` return 404. When these calls fail, `xc_create_user_group` and `xc_update_user_group` automatically include ready-to-run Terraform HCL in the response.
+
+Workarounds:
+- **Terraform**: `xc_tf_apply(resource_type="user_group", ...)` — requires cert auth
+- **F5 XC Console**: Account → User Management → Groups
+
+Namespace creation, load balancers, WAF policies, and all UC-2–UC-4 resources work fully via REST.
 
 ---
 
@@ -194,5 +254,4 @@ MCP endpoint: `POST /mcp`
 npm run dev     # run with tsx auto-reload
 npm run check   # type-check only
 npm run build   # compile to dist/
-npm run clean   # remove dist/
 ```

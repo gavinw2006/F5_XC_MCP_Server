@@ -19,5 +19,8 @@ export function loadConfig(): AppConfig {
     keyPath: process.env.F5_XC_KEY_PATH?.trim(),
     defaultNamespace,
     dryRun,
+    tfBin: process.env.F5_XC_TF_BIN?.trim(),
+    p12Path: process.env.F5_XC_P12_PATH?.trim(),
+    p12Password: process.env.F5_XC_P12_PASSWORD?.trim(),
   };
 }

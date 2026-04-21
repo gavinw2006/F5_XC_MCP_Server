@@ -6,14 +6,17 @@ import express from "express";
 
 import { loadConfig } from "./services/config.js";
 import { F5XcClient } from "./services/f5-xc-client.js";
+import { TerraformRunner } from "./services/terraform-runner.js";
 import { registerStatusTool } from "./tools/status.js";
 import { registerIdentityTools } from "./tools/identity.js";
 import { registerLoadBalancerTools } from "./tools/load-balancer.js";
 import { registerSecurityTools } from "./tools/security.js";
 import { registerApiSecurityTools } from "./tools/api-security.js";
+import { registerTerraformTools } from "./tools/terraform.js";
 
 const config = loadConfig();
 const xcClient = new F5XcClient(config);
+const tfRunner = new TerraformRunner(config);
 
 const server = new McpServer({
   name: "f5-xc-mcp-server",
@@ -25,6 +28,7 @@ registerIdentityTools(server, xcClient, config);
 registerLoadBalancerTools(server, xcClient, config);
 registerSecurityTools(server, xcClient, config);
 registerApiSecurityTools(server, xcClient, config);
+registerTerraformTools(server, tfRunner, config);
 
 async function runStdio(): Promise<void> {
   const transport = new StdioServerTransport();
