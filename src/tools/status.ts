@@ -11,11 +11,17 @@ export function registerStatusTool(server: McpServer, config: AppConfig): void {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async () => {
+      const authMethod = config.certPath && config.keyPath
+        ? "certificate (mTLS)"
+        : config.apiToken
+          ? "API token"
+          : "none — configure F5_XC_API_TOKEN or F5_XC_CERT_PATH + F5_XC_KEY_PATH";
+
       const payload = {
         tenant: config.tenant || "(not set)",
         baseUrl: config.baseUrl || "(not set — set F5_XC_TENANT or F5_XC_BASE_URL)",
         defaultNamespace: config.defaultNamespace,
-        apiTokenConfigured: !!config.apiToken,
+        authMethod,
         dryRun: config.dryRun,
         dryRunNote: config.dryRun
           ? "SAFE MODE: All mutating calls return previews. Set F5_XC_DRY_RUN=false to enable live calls."

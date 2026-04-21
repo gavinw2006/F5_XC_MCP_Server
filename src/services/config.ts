@@ -15,6 +15,8 @@ export function loadConfig(): AppConfig {
     tenant,
     baseUrl,
     apiToken: process.env.F5_XC_API_TOKEN?.trim(),
+    certPath: process.env.F5_XC_CERT_PATH?.trim(),
+    keyPath: process.env.F5_XC_KEY_PATH?.trim(),
     defaultNamespace,
     dryRun,
   };

@@ -4,6 +4,8 @@ export interface AppConfig {
   tenant: string;
   baseUrl: string;
   apiToken?: string;
+  certPath?: string;
+  keyPath?: string;
   defaultNamespace: string;
   dryRun: boolean;
 }
