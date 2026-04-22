@@ -1,0 +1,8 @@
+mcp.xcdemo.site {
+    reverse_proxy localhost:3000 {
+        transport http {
+            dial_timeout 5s
+            response_header_timeout 90s
+        }
+    }
+}

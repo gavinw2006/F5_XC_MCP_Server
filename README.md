@@ -85,31 +85,54 @@ Add to your Claude Code MCP config (`~/.claude.json` or project `.claude/setting
 
 ---
 
-## Remote Deployment (HTTP mode)
+## Remote Deployment (HTTPS mode)
 
-Deployable on Ubuntu VM (AWS/Azure/GCP/Raspberry Pi):
+The server runs on port 3000 (HTTP, internal) behind **Caddy** which handles TLS termination and automatic Let's Encrypt certificates.
+
+### 1. Install and build
 
 ```bash
-# Install Node 18+ (via nvm recommended)
+# Install Node 20 via nvm
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 nvm install 20 && nvm use 20
 
-# Clone and build
 git clone https://github.com/gavinw2006/F5_XC_MCP_Server
 cd F5_XC_MCP_Server
 npm install && npm run build
-
-# Configure
-cp .env.example .env  # fill in credentials
-
-# Run as HTTP server
-TRANSPORT=http PORT=3000 npm start
+cp .env.example .env  # fill in F5_XC_TENANT, F5_XC_API_TOKEN, F5_XC_DRY_RUN=false
 ```
 
-Health check endpoint: `GET /health`  
-MCP endpoint: `POST /mcp`
+### 2. Run the MCP server as a systemd service
 
-See `f5-xc-mcp.service` for the systemd unit file example.
+```bash
+sudo cp deployment/f5-xc-mcp.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now f5-xc-mcp
+```
+
+### 3. Install Caddy and configure HTTPS
+
+```bash
+# Install Caddy
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+  | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+  | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update && sudo apt install -y caddy
+
+# Deploy Caddyfile (edit domain first)
+sudo cp deployment/Caddyfile /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+Caddy automatically obtains and renews a Let's Encrypt certificate for your domain. Ensure:
+- DNS A record points to the VM's public IP
+- Ports **80** (ACME challenge) and **443** (HTTPS) are open in your firewall/NSG
+
+The `deployment/Caddyfile` template uses `mcp.xcdemo.site` — replace with your domain.
+
+After setup:
+- MCP endpoint: `POST https://your-domain/mcp`
+- Health check: `GET https://your-domain/health`
 
 ---
 
