@@ -1,4 +1,4 @@
-mcp.xcdemo.site {
+your-domain.example.com {
     reverse_proxy localhost:3000 {
         transport http {
             dial_timeout 5s

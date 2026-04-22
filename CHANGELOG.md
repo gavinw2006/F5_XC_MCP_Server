@@ -7,7 +7,7 @@ All notable changes to the F5 XC MCP Server are documented here.
 ## [Unreleased]
 
 ### Deployment
-- MCP server now exposed via HTTPS at `https://mcp.xcdemo.site/mcp`
+- MCP server now exposed via HTTPS using Caddy with automatic Let's Encrypt certificate
 - Caddy 2.11.2 installed as TLS-terminating reverse proxy on the Azure VM
 - Let's Encrypt certificate auto-provisioned via ACME HTTP-01 challenge
 - Azure NSG rules added for ports 80 (ACME) and 443 (HTTPS)

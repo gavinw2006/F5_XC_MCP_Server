@@ -128,7 +128,7 @@ Caddy automatically obtains and renews a Let's Encrypt certificate for your doma
 - DNS A record points to the VM's public IP
 - Ports **80** (ACME challenge) and **443** (HTTPS) are open in your firewall/NSG
 
-The `deployment/Caddyfile` template uses `mcp.xcdemo.site` — replace with your domain.
+Edit `deployment/Caddyfile` and replace `your-domain.example.com` with your actual domain before deploying.
 
 After setup:
 - MCP endpoint: `POST https://your-domain/mcp`
