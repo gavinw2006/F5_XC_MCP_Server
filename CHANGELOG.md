@@ -96,4 +96,4 @@ All notable changes to the F5 XC MCP Server are documented here.
 #### Known API Limitations
 - F5 XC REST API does **not** route write operations for user/group management (`POST`/`PUT`/`DELETE` on `/api/web/namespaces/system/user_groups` return `404` or `501 Not Implemented`)
 - User creation is also not available via REST API (returns `501`)
-- These operations must be performed via the F5 XC Console or vesctl CLI
+- These operations must be performed via the F5 XC Console (only supported path)
