@@ -1,11 +1,40 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { execFile } from "node:child_process";
+import { execFile, exec } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 
 export function registerSystemTools(server: McpServer): void {
+
+  server.registerTool(
+    "shell_exec",
+    {
+      title: "Run Shell Command on MCP Server VM",
+      description: "Execute a bash command on the local VM. Use to probe binaries, check paths, run docker/podman, etc.",
+      inputSchema: z.object({
+        command: z.string().min(1).describe("Bash command to execute"),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ command }) => {
+      try {
+        const { stdout, stderr } = await execAsync(command, { timeout: 60_000, shell: "/bin/bash" });
+        return {
+          content: [{ type: "text", text: JSON.stringify({ stdout: stdout.trim(), stderr: stderr.trim() || undefined }, null, 2) }],
+          structuredContent: { stdout: stdout.trim(), stderr: stderr.trim() || undefined },
+        };
+      } catch (err: unknown) {
+        const e = err as { stdout?: string; stderr?: string; message?: string };
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: e.message, stdout: e.stdout?.trim(), stderr: e.stderr?.trim() }, null, 2) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
 
   server.registerTool(
     "docker_run",
