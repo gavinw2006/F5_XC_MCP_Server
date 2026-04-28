@@ -13,6 +13,7 @@ import { registerLoadBalancerTools } from "./tools/load-balancer.js";
 import { registerSecurityTools } from "./tools/security.js";
 import { registerApiSecurityTools } from "./tools/api-security.js";
 import { registerTerraformTools } from "./tools/terraform.js";
+import { registerSystemTools } from "./tools/system.js";
 
 const config = loadConfig();
 const xcClient = new F5XcClient(config);
@@ -29,6 +30,7 @@ registerLoadBalancerTools(server, xcClient, config);
 registerSecurityTools(server, xcClient, config);
 registerApiSecurityTools(server, xcClient, config);
 registerTerraformTools(server, tfRunner, config);
+registerSystemTools(server);
 
 async function runStdio(): Promise<void> {
   const transport = new StdioServerTransport();
