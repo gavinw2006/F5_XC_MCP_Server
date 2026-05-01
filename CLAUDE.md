@@ -112,6 +112,10 @@ Always include the existing NS entry in `default_rr_set_group` when doing a PUT 
 - Port ranges are capped at **64 ports per LB** — true all-ports wildcard (like BIG-IP port 0) is not supported.
 - Origin pool port must be ≥ 1; to mirror the LB port set origin pool `port` equal to `listen_port`.
 
+## Auto-Documentation Rule
+
+At the end of any session where a new F5 XC API pattern, use case, or resource type was successfully configured via the MCP server, **automatically invoke the `/update-xc-docs` skill** without waiting to be asked. This keeps the use case table, Available Tools section, and API Quirks in sync with what has actually been proven to work.
+
 ## Git & Push Rules
 
 - **Every push to the remote repo requires explicit user permission first.** Never push without asking.
