@@ -18,6 +18,7 @@ F5 XC API reference: https://docs.cloud.f5.com/docs-v2/api
 | UC-2 | HTTP Load Balancer — create, configure, edit, delete |
 | UC-3 | WAF & API Protection policies, Bot Defense, DDoS — create, configure, edit, delete |
 | UC-4 | API Discovery, API Security, Web Application Scanning, API Security policies — create, configure, edit, delete |
+| UC-5 | DNS Management — create DNS zones (system namespace only), add/edit/delete A and CNAME records via `default_rr_set_group`, delegate to F5 XC nameservers (`ns1/ns2.f5clouddns.com`) |
 
 ## Architecture (planned)
 
@@ -57,6 +58,59 @@ src/
 | `F5_XC_P12_PASSWORD` | Password for the `.p12` file | — |
 
 Store these in a `.env` file (not committed).
+
+## F5 XC API Quirks
+
+### DNS Zones
+
+DNS zones use a **different API base path** — `/api/config/dns/` not `/api/config/`:
+
+```
+GET/POST  /api/config/dns/namespaces/system/dns_zones
+GET/PUT   /api/config/dns/namespaces/system/dns_zones/{zone-fqdn}
+```
+
+- **Zone name must be the FQDN** (e.g. `aidemo.cloud`), not a slug.
+- **Only `system` namespace is allowed** — creating in any other namespace returns 400.
+- Delegated NS records are in `spec.primary.default_rr_set_group[].ns_record.values` (not a top-level `name_servers` field).
+
+**Adding/editing A records** — records go in `default_rr_set_group` with the hostname in the record's own `name` field. `rr_set_group` with nested `rr_set[]` silently creates empty sets — do not use it for records:
+
+```json
+{
+  "spec": {
+    "primary": {
+      "default_rr_set_group": [
+        {
+          "ttl": 86400,
+          "ns_record": { "name": "", "values": ["ns1.f5clouddns.com", "ns2.f5clouddns.com"] },
+          "description": ""
+        },
+        {
+          "ttl": 300,
+          "a_record": { "name": "demo", "values": ["20.5.122.10"] },
+          "description": ""
+        },
+        {
+          "ttl": 300,
+          "a_record": { "name": "app", "values": ["1.2.3.4"] },
+          "description": ""
+        }
+      ],
+      "rr_set_group": []
+    }
+  }
+}
+```
+
+Always include the existing NS entry in `default_rr_set_group` when doing a PUT — omitting it removes the NS records.
+
+### TCP Load Balancers
+
+- No dedicated MCP tool — use `xc_raw_request` with `POST/PUT /api/config/namespaces/{ns}/tcp_loadbalancers`.
+- Use `origin_pools_weights` (not `origin_pools`) for the pool reference array.
+- Port ranges are capped at **64 ports per LB** — true all-ports wildcard (like BIG-IP port 0) is not supported.
+- Origin pool port must be ≥ 1; to mirror the LB port set origin pool `port` equal to `listen_port`.
 
 ## Git & Push Rules
 

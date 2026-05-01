@@ -12,6 +12,7 @@ F5 XC API reference: https://docs.cloud.f5.com/docs-v2/api
 | UC-2 | HTTP Load Balancer and Origin Pool CRUD |
 | UC-3 | WAF (App Firewalls), Service Policies, Bot Defense, DDoS rules |
 | UC-4 | API Discovery, API Security (API Definitions, App API Groups) |
+| UC-5 | DNS Management — zones, A/CNAME records, NS delegation to F5 XC (`ns1/ns2.f5clouddns.com`) |
 | TF | Terraform fallback — generate & apply HCL for any F5 XC resource |
 
 ---
