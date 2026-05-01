@@ -199,6 +199,17 @@ After setup:
 | `xc_create_app_api_group` | Create API endpoint group |
 | `xc_raw_request` | Raw API request (escape hatch for any F5 XC endpoint) |
 
+### DNS Management (UC-5)
+
+| Tool | Description |
+|---|---|
+| `xc_raw_request` GET `/api/config/dns/namespaces/system/dns_zones` | List all DNS zones |
+| `xc_raw_request` GET `/api/config/dns/namespaces/system/dns_zones/{name}` | Get DNS zone details and NS records |
+| `xc_raw_request` POST `/api/config/dns/namespaces/system/dns_zones` | Create a primary DNS zone |
+| `xc_raw_request` PUT `/api/config/dns/namespaces/system/dns_zones/{name}` | Add/edit/delete A and CNAME records |
+
+> DNS operations use `xc_raw_request` — zones must be in the `system` namespace. Records are managed via `spec.primary.default_rr_set_group` in the PUT body.
+
 ### Terraform Fallback
 | Tool | Description |
 |---|---|
