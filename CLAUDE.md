@@ -118,6 +118,7 @@ At the end of any session where a new F5 XC API pattern, use case, or resource t
 
 ## Git & Push Rules
 
-- **Every push to the remote repo requires explicit user permission first.** Never push without asking.
-- Remote repo: `F5_XC_MCP_Server` (to be created on GitHub)
-- README and other repo files must be written before the first push.
+- After every change to any file in this repo, **commit the changes and ask the user for permission to push** — do not wait for the user to request it.
+- If the user says yes, push immediately to `origin main`.
+- If the user says no, leave the commit in place and move on.
+- Never push without asking first.
