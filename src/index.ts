@@ -14,6 +14,11 @@ import { registerSecurityTools } from "./tools/security.js";
 import { registerApiSecurityTools } from "./tools/api-security.js";
 import { registerTerraformTools } from "./tools/terraform.js";
 import { registerSystemTools } from "./tools/system.js";
+import { registerDnsTools } from "./tools/dns.js";
+import { registerWafScanningTools } from "./tools/waf-scanning.js";
+import { registerDnsLbTools } from "./tools/dns-lb.js";
+import { registerObservabilityTools } from "./tools/observability.js";
+import { registerCustomerEdgeTools } from "./tools/customer-edge.js";
 
 const config = loadConfig();
 const xcClient = new F5XcClient(config);
@@ -31,6 +36,11 @@ registerSecurityTools(server, xcClient, config);
 registerApiSecurityTools(server, xcClient, config);
 registerTerraformTools(server, tfRunner, config);
 registerSystemTools(server);
+registerDnsTools(server, xcClient, config);
+registerWafScanningTools(server, xcClient, config);
+registerDnsLbTools(server, xcClient, config);
+registerObservabilityTools(server, xcClient, config);
+registerCustomerEdgeTools(server, xcClient, config);
 
 async function runStdio(): Promise<void> {
   const transport = new StdioServerTransport();

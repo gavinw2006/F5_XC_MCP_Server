@@ -12,7 +12,11 @@ F5 XC API reference: https://docs.cloud.f5.com/docs-v2/api
 | UC-2 | HTTP Load Balancer and Origin Pool CRUD |
 | UC-3 | WAF (App Firewalls), Service Policies, Bot Defense, DDoS rules |
 | UC-4 | API Discovery, API Security (API Definitions, App API Groups) |
-| UC-5 | DNS Management — zones, A/CNAME records, NS delegation to F5 XC (`ns1/ns2.f5clouddns.com`) |
+| UC-5 | DNS Management — primary and secondary zones, A/CNAME records, NS delegation to F5 XC |
+| UC-6 | Web Application Scanning (DAST) — findings, scan jobs, recon (separate API at app.heyhack.com, requires `F5_XC_WAS_API_KEY`) |
+| UC-7 | DNS Load Balancing / GSLB — weighted, geographic, and failover routing (under `/api/config/dns/` base path) |
+| UC-8 | Observability / Synthetic Monitoring — HTTP/DNS health checks, alert policies (`alert_policys`), alert receivers |
+| UC-9 | Customer Edge (CE) — registration tokens, site lifecycle, Terraform HCL for Azure/AWS/GCP |
 | TF | Terraform fallback — generate & apply HCL for any F5 XC resource |
 
 ---
@@ -203,12 +207,66 @@ After setup:
 
 | Tool | Description |
 |---|---|
-| `xc_raw_request` GET `/api/config/dns/namespaces/system/dns_zones` | List all DNS zones |
-| `xc_raw_request` GET `/api/config/dns/namespaces/system/dns_zones/{name}` | Get DNS zone details and NS records |
-| `xc_raw_request` POST `/api/config/dns/namespaces/system/dns_zones` | Create a primary DNS zone |
-| `xc_raw_request` PUT `/api/config/dns/namespaces/system/dns_zones/{name}` | Add/edit/delete A and CNAME records |
+| `xc_list_dns_zones` | List all DNS zones in the system namespace |
+| `xc_get_dns_zone` | Get DNS zone spec including all records |
+| `xc_create_dns_zone` | Create a primary DNS zone with NS delegation to F5 XC |
+| `xc_create_dns_zone_secondary` | Create a secondary DNS zone with external primary servers |
+| `xc_update_dns_zone_records` | Replace the full record set of a primary zone (PUT) |
+| `xc_delete_dns_zone` | Delete a DNS zone and all its records |
 
-> DNS operations use `xc_raw_request` — zones must be in the `system` namespace. Records are managed via `spec.primary.default_rr_set_group` in the PUT body.
+> DNS zones must be in the `system` namespace. Records go in `spec.primary.default_rr_set_group`. Always include the NS entry on PUT.
+
+### Web Application Scanning (UC-6)
+
+> Requires `F5_XC_WAS_API_KEY` env var. Web App Scanning uses a separate API at `app.heyhack.com` — not the standard F5 XC tenant API.
+
+| Tool | Description |
+|---|---|
+| `xc_was_list_findings` | List DAST vulnerability findings (optionally filtered by application) |
+| `xc_was_start_scan` | Start a new DAST scan job |
+| `xc_was_list_recon_findings` | List recon findings for all or a specific job |
+| `xc_was_list_recon_services` | List services discovered by recon jobs |
+
+### DNS Load Balancing / GSLB (UC-7)
+
+> DNS LB resources use `/api/config/dns/` base path — distinct from HTTP LBs.
+
+| Tool | Description |
+|---|---|
+| `xc_list_dns_lbs` | List DNS load balancers |
+| `xc_get_dns_lb` | Get DNS LB spec |
+| `xc_create_dns_lb` | Create DNS LB with weighted/geographic/failover routing |
+| `xc_update_dns_lb` | Update DNS LB routing policy or pools |
+| `xc_delete_dns_lb` | Delete DNS LB |
+
+### Observability / Synthetic Monitoring (UC-8)
+
+> Alert policies endpoint spells as `alert_policys` (API quirk). `host_header` and `use_origin_server_name` are mutually exclusive in health check specs.
+
+| Tool | Description |
+|---|---|
+| `xc_list_monitors` | List health check monitors |
+| `xc_get_monitor` | Get monitor spec |
+| `xc_create_monitor_http` | Create HTTP/HTTPS synthetic monitor |
+| `xc_create_monitor_dns` | Create DNS synthetic monitor |
+| `xc_update_monitor` | Update monitor spec |
+| `xc_delete_monitor` | Delete monitor |
+| `xc_list_alert_policys` | List alert policies |
+| `xc_create_alert_policy` | Create alert policy (email, Slack, PagerDuty) |
+| `xc_delete_alert_policy` | Delete alert policy |
+| `xc_list_alert_receivers` | List alert receivers (reusable notification targets) |
+| `xc_create_alert_receiver` | Create alert receiver (email, Slack, PagerDuty) |
+| `xc_delete_alert_receiver` | Delete alert receiver |
+
+### Customer Edge Lifecycle (UC-9)
+
+| Tool | Description |
+|---|---|
+| `xc_ce_token_create` | Create a CE registration token |
+| `xc_ce_site_list` | List registered CE sites and status |
+| `xc_ce_site_get` | Get CE site details and registration state |
+| `xc_ce_site_delete` | Decommission a CE site |
+| `xc_ce_tf_generate` | Generate Terraform HCL for CE on Azure, AWS, or GCP |
 
 ### Terraform Fallback
 | Tool | Description |
@@ -268,6 +326,7 @@ Also ensure `terraform` is installed on the server (`F5_XC_TF_BIN` to override p
 | `F5_XC_TF_BIN` | `terraform` | Path to terraform binary |
 | `F5_XC_P12_PATH` | — | `.p12` credential file for Terraform auth |
 | `F5_XC_P12_PASSWORD` | — | Password for the `.p12` file |
+| `F5_XC_WAS_API_KEY` | — | API key for Web App Scanning (app.heyhack.com) — separate from XC API token |
 
 ---
 

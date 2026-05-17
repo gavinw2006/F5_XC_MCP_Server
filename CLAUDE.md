@@ -18,7 +18,11 @@ F5 XC API reference: https://docs.cloud.f5.com/docs-v2/api
 | UC-2 | HTTP Load Balancer — create, configure, edit, delete |
 | UC-3 | WAF & API Protection policies, Bot Defense, DDoS — create, configure, edit, delete |
 | UC-4 | API Discovery, API Security, Web Application Scanning, API Security policies — create, configure, edit, delete |
-| UC-5 | DNS Management — create DNS zones (system namespace only), add/edit/delete A and CNAME records via `default_rr_set_group`, delegate to F5 XC nameservers (`ns1/ns2.f5clouddns.com`) |
+| UC-5 | DNS Management — primary and secondary DNS zones (system namespace only), A/CNAME records via `default_rr_set_group`, NS delegation to `ns1/ns2.f5clouddns.com` ✓ Live tested |
+| UC-6 | Web Application Scanning (DAST) — separate SaaS API at `app.heyhack.com`, requires `F5_XC_WAS_API_KEY` env var (not the standard XC API token). Findings, scan jobs, recon. |
+| UC-7 | DNS Load Balancing / GSLB — `dns_load_balancers`, `dns_lb_pools`, `dns_lb_health_checks` under `/api/config/dns/` base path ✓ Live tested (list) |
+| UC-8 | Observability / Synthetic Monitoring — HTTP/DNS health check monitors (`healthchecks`), alert policies (`alert_policys`), alert receivers ✓ Live tested |
+| UC-9 | Customer Edge (CE) lifecycle — registration tokens, site list/status/delete, Terraform HCL generation for Azure/AWS/GCP CE deployment ✓ Live tested |
 
 ## Architecture (planned)
 
@@ -56,6 +60,7 @@ src/
 | `F5_XC_TF_BIN` | Path to terraform binary | `terraform` (system PATH) |
 | `F5_XC_P12_PATH` | Path to `.p12` certificate for Terraform auth | — |
 | `F5_XC_P12_PASSWORD` | Password for the `.p12` file | — |
+| `F5_XC_WAS_API_KEY` | API key for Web App Scanning (heyhack.com) — separate from XC API token | — |
 
 Store these in a `.env` file (not committed).
 
@@ -104,6 +109,73 @@ GET/PUT   /api/config/dns/namespaces/system/dns_zones/{zone-fqdn}
 ```
 
 Always include the existing NS entry in `default_rr_set_group` when doing a PUT — omitting it removes the NS records.
+
+### Secondary DNS Zones
+
+Secondary zones use `spec.secondary` instead of `spec.primary`:
+
+```json
+{
+  "spec": {
+    "secondary": {
+      "external_primary_servers": [
+        {"ip": "203.0.113.1"},
+        {"ip": "203.0.113.2"}
+      ]
+    }
+  }
+}
+```
+
+### Web Application Scanning (UC-6)
+
+**Web App Scanning is a separate SaaS service — NOT the standard F5 XC tenant API.**
+
+- API base URL: `https://app.heyhack.com` (not `console.ves.volterra.io`)
+- Authentication: `Authorization: Heyhack <API_KEY>` (not `APIToken`)
+- Env var: `F5_XC_WAS_API_KEY` — set separately in `.env`
+- Key endpoints:
+  - `GET /api/findings` — list vulnerability findings (filter by `?applicationId=<id>`)
+  - `POST /api/scanjobs` — start a new DAST scan (`{profileId, applicationId}`)
+  - `GET /api/recon/findings` — reconnaissance findings for all jobs
+  - `GET /api/recon/{id}/findings` — findings for a specific recon job
+  - `GET /api/recon/services` — services discovered by recon jobs
+- Swagger docs: `https://app.heyhack.com/swagger`
+
+### DNS Load Balancers (GSLB) (UC-7)
+
+**DNS LBs use `/api/config/dns/` base path — NOT `/api/config/`.**
+
+```
+GET/POST  /api/config/dns/namespaces/{ns}/dns_load_balancers
+GET/PUT   /api/config/dns/namespaces/{ns}/dns_load_balancers/{name}
+GET/POST  /api/config/dns/namespaces/{ns}/dns_lb_pools
+GET/POST  /api/config/dns/namespaces/{ns}/dns_lb_health_checks
+```
+
+- Distinct from HTTP LBs — resolves at DNS layer, not HTTP.
+- Pool priority controls failover: priority 1 pools are tried before priority 2.
+- Reference a DNS LB from a DNS zone record to enable GSLB.
+- `spec.rule_list` is required and must have at least one rule entry.
+
+### Health Checks / Synthetic Monitoring (UC-8)
+
+- Health checks: `/api/config/namespaces/{ns}/healthchecks`
+- **Alert policies quirk**: endpoint spells it `alert_policys` (not `alert_policies`):
+  `GET/POST /api/config/namespaces/{ns}/alert_policys`
+- Alert receivers (separate notification target objects): `/api/config/namespaces/{ns}/alert_receivers`
+- Health check spec quirk: `host_header` and `use_origin_server_name` are **mutually exclusive** — do not set both. Use `host_header` when you want to probe a specific hostname.
+- Health check `spec` uses `http_health_check` or `dns_health_check` as the probe type key.
+- Monitors are referenced by origin pools for backend health — same objects used for synthetic monitoring.
+
+### Customer Edge Registration (UC-9)
+
+- Registration tokens: `POST /api/register/namespaces/system/tokens`
+  - **Quirk**: body must use full metadata wrapper: `{"metadata": {"name": "...", "namespace": "system"}, "spec": {}}` — bare `{"name": "..."}` returns 400.
+- CE sites are read-only via REST — CEs self-register: `GET /api/config/namespaces/system/sites`
+- Site delete: `DELETE /api/config/namespaces/system/sites/{name}`
+- Cloud CE deployment must be done via Terraform using the `volterraedge/volterra` provider.
+- Resource types: `volterra_azure_vnet_site`, `volterra_aws_vpc_site`, `volterra_gcp_vpc_site`
 
 ### TCP Load Balancers
 
