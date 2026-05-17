@@ -191,17 +191,20 @@ After setup:
 | `xc_delete_service_policy` | Delete service policy |
 
 ### API Security (UC-4)
+
+> Validated with the Arcadia Finance OpenAPI 3.0.3 spec (8 endpoints). Upload specs base64-encoded in `spec.swagger_specs[].spec_as_bytes`. Attach to an HTTP LB via `spec.api_definition_refs` (array). Apply per-path rate limiting via `spec.api_rate_limit.api_endpoints` on the HTTP LB. Use `xc_raw_request` PUT for LB-level API Security settings.
+
 | Tool | Description |
 |---|---|
-| `xc_list_api_definitions` | List API definitions |
-| `xc_get_api_definition` | Get API definition spec |
-| `xc_create_api_definition` | Create API definition |
-| `xc_update_api_definition` | Update API definition |
-| `xc_delete_api_definition` | Delete API definition |
+| `xc_list_api_definitions` | List API definitions in a namespace |
+| `xc_get_api_definition` | Get API definition spec including endpoint inventory |
+| `xc_create_api_definition` | Create API definition — upload OpenAPI spec (base64 `spec_as_bytes`) or enable learning from traffic |
+| `xc_update_api_definition` | Replace API definition spec (PUT) |
+| `xc_delete_api_definition` | Delete API definition (detach from LBs first) |
 | `xc_list_app_api_groups` | List API endpoint groups |
-| `xc_get_app_api_group` | Get API endpoint group |
-| `xc_create_app_api_group` | Create API endpoint group |
-| `xc_raw_request` | Raw API request (escape hatch for any F5 XC endpoint) |
+| `xc_get_app_api_group` | Get API endpoint group spec |
+| `xc_create_app_api_group` | Create API endpoint group — inline path patterns or reference an API definition |
+| `xc_raw_request` | Raw API request — use for attaching API definitions to HTTP LBs and configuring per-path rate limiting |
 
 ### DNS Management (UC-5)
 

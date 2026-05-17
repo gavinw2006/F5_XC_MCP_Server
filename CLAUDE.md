@@ -177,6 +177,78 @@ GET/POST  /api/config/dns/namespaces/{ns}/dns_lb_health_checks
 - Cloud CE deployment must be done via Terraform using the `volterraedge/volterra` provider.
 - Resource types: `volterra_azure_vnet_site`, `volterra_aws_vpc_site`, `volterra_gcp_vpc_site`
 
+### API Security / API Definitions (UC-4)
+
+- API definitions: `GET/POST /api/config/namespaces/{ns}/api_definitions`
+- App API groups: `GET/POST /api/config/namespaces/{ns}/app_api_groups`
+- No dedicated update tool for app_api_groups — use `xc_raw_request` with PUT.
+
+**Uploading an OpenAPI spec** — base64-encode the JSON and pass it in `spec.swagger_specs[].spec_as_bytes`:
+```json
+{
+  "metadata": {"name": "arcadia-finance", "namespace": "my-ns"},
+  "spec": {
+    "swagger_specs": [{"spec_as_bytes": "<base64-encoded-openapi-json>"}]
+  }
+}
+```
+
+**Attaching an API definition to an HTTP LB** — PUT the LB with `spec.api_definition_refs` (array, not `api_definition`):
+```json
+{
+  "spec": {
+    "api_definition_refs": [{"name": "arcadia-finance", "namespace": "my-ns", "tenant": "my-tenant"}],
+    "enable_api_discovery": {}
+  }
+}
+```
+
+**Per-path API rate limiting** — PUT the HTTP LB with `spec.api_rate_limit.api_endpoints`:
+```json
+{
+  "spec": {
+    "api_rate_limit": {
+      "api_endpoints": [
+        {
+          "http_method": "POST",
+          "path": "/trading/rest/buy_stocks.php",
+          "inline_rate_limiter": {
+            "rate_limiter": {"total_number": 10, "unit": "MINUTE"}
+          }
+        }
+      ]
+    }
+  }
+}
+```
+`unit` values: `SECOND`, `MINUTE`, `HOUR`.
+
+**App API group — inline endpoints**:
+```json
+{
+  "spec": {
+    "inline_api_group": {
+      "elements": [
+        {"methods": ["POST"], "path_regex": "/trading/rest/buy_stocks\\.php"}
+      ]
+    }
+  }
+}
+```
+
+**App API group — reference an API definition**:
+```json
+{
+  "spec": {
+    "api_group_ref": {
+      "api_definition_ref": {"name": "arcadia-finance", "namespace": "my-ns", "tenant": "my-tenant"}
+    }
+  }
+}
+```
+
+These patterns were validated via dry-run testing with the Arcadia Finance OpenAPI 3.0.3 spec (8 endpoints: `/api/lower_bar.php`, `/api/side_bar.php`, `/api/side_bar_accounts.php`, `/trading/rest/portfolio.php`, `/trading/rest/buy_stocks.php`, `/trading/rest/sell_stocks.php`, `/trading/transactions.php`, `/api/rest/execute_money_transfer.php`).
+
 ### TCP Load Balancers
 
 - No dedicated MCP tool — use `xc_raw_request` with `POST/PUT /api/config/namespaces/{ns}/tcp_loadbalancers`.

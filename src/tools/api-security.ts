@@ -101,7 +101,12 @@ Args:
       {
         "swagger_specs": [{"spec_as_bytes": "<base64-encoded-openapi-json>"}]
       }
-  Attach to HTTP LB via the "api_definition" field in the HTTP LB spec.
+  Attach to HTTP LB via "api_definition_refs" (array) in the HTTP LB spec:
+      {
+        "api_definition_refs": [{"name": "<api-def-name>", "namespace": "<ns>", "tenant": "<tenant>"}],
+        "enable_api_discovery": {}
+      }
+  Use xc_raw_request with PUT /api/config/namespaces/{ns}/http_loadbalancers/{lb-name} to attach.
   - dryRun: Preview without executing`,
       inputSchema: z.object({
         namespace: z.string().default(config.defaultNamespace).describe("Namespace for the API definition"),
@@ -284,7 +289,14 @@ F5 XC API base path examples:
   - /api/config/namespaces/{ns}/app_firewalls — WAF policies
   - /api/config/namespaces/{ns}/service_policies — service policies
   - /api/config/namespaces/{ns}/api_definitions — API definitions
+  - /api/config/namespaces/{ns}/app_api_groups — API endpoint groups
   - /api/config/namespaces/{ns}/web_app_scanners — Web App Scanning configs
+  - /api/config/namespaces/{ns}/tcp_loadbalancers — TCP LBs
+
+Common UC-4 patterns (use PUT on the HTTP LB to modify):
+  - Attach API definition: set spec.api_definition_refs=[{name,namespace,tenant}] and spec.enable_api_discovery={}
+  - Per-path rate limiting: set spec.api_rate_limit.api_endpoints=[{http_method,path,inline_rate_limiter:{rate_limiter:{total_number,unit}}}]
+    unit values: SECOND, MINUTE, HOUR
 
 Full API reference: https://docs.cloud.f5.com/docs-v2/api
 
