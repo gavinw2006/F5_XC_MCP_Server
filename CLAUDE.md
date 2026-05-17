@@ -17,7 +17,7 @@ F5 XC API reference: https://docs.cloud.f5.com/docs-v2/api
 | UC-1 | User / Group / Namespace administration — create users, groups, namespaces; assign users to groups; grant access with namespace/resource/privilege scoping |
 | UC-2 | HTTP Load Balancer — create, configure, edit, delete |
 | UC-3 | WAF & API Protection policies, Bot Defense, DDoS — create, configure, edit, delete |
-| UC-4 | API Discovery, API Security, Web Application Scanning, API Security policies — create, configure, edit, delete |
+| UC-4 | API Discovery, API Security, Web Application Scanning, API Security policies — create, configure, edit, delete ✓ Live tested |
 | UC-5 | DNS Management — primary and secondary DNS zones (system namespace only), A/CNAME records via `default_rr_set_group`, NS delegation to `ns1/ns2.f5clouddns.com` ✓ Live tested |
 | UC-6 | Web Application Scanning (DAST) — separate SaaS API at `app.heyhack.com`, requires `F5_XC_WAS_API_KEY` env var (not the standard XC API token). Findings, scan jobs, recon. |
 | UC-7 | DNS Load Balancing / GSLB — `dns_load_balancers`, `dns_lb_pools`, `dns_lb_health_checks` under `/api/config/dns/` base path ✓ Live tested (list) |
@@ -179,25 +179,42 @@ GET/POST  /api/config/dns/namespaces/{ns}/dns_lb_health_checks
 
 ### API Security / API Definitions (UC-4)
 
+**LIVE TESTED** against anz-partners tenant with Arcadia Finance OpenAPI 3.0.3 spec (2026-05-17).
+
 - API definitions: `GET/POST /api/config/namespaces/{ns}/api_definitions`
 - App API groups: `GET/POST /api/config/namespaces/{ns}/app_api_groups`
 - No dedicated update tool for app_api_groups — use `xc_raw_request` with PUT.
 
-**Uploading an OpenAPI spec** — base64-encode the JSON and pass it in `spec.swagger_specs[].spec_as_bytes`:
+**NAMESPACE RESTRICTION**: `api_definitions` (and `app_api_groups`) can only be created in `shared` or an application namespace — **NOT in `system`** (returns 400 with "allowed to be created only in shared or app").
+
+#### Uploading an OpenAPI spec — two-step process
+
+**Step 1**: Upload the spec to the object store (PUT, auto-generates version):
+```
+PUT /api/object_store/namespaces/{ns}/stored_objects/swagger/{name}
+```
+Body: `{"namespace": "...", "object_type": "swagger", "name": "...", "bytes_value": "<base64>", "content_format": "json", "no_attributes": {}}`
+
+Response includes the stored object path: `/api/object_store/namespaces/shared/stored_objects/swagger/arcadia-finance/v1-26-05-17`
+
+**Step 2**: Create the API definition referencing the stored object path:
 ```json
 {
-  "metadata": {"name": "arcadia-finance", "namespace": "my-ns"},
+  "metadata": {"name": "arcadia-finance", "namespace": "shared"},
   "spec": {
-    "swagger_specs": [{"spec_as_bytes": "<base64-encoded-openapi-json>"}]
+    "swagger_specs": ["/api/object_store/namespaces/shared/stored_objects/swagger/arcadia-finance/v1-26-05-17"]
   }
 }
 ```
+`swagger_specs` takes **object store path strings** (not base64 content, not objects with `spec_as_bytes`). The list endpoint is `GET /api/object_store/namespaces/{ns}/stored_objects/swagger` (returns 200). Delete: `DELETE /api/object_store/namespaces/{ns}/stored_objects/swagger/{name}/{version}`.
+
+F5 XC auto-generates the api_groups from the uploaded spec (one group per path+method combination discovered).
 
 **Attaching an API definition to an HTTP LB** — PUT the LB with `spec.api_definition_refs` (array, not `api_definition`):
 ```json
 {
   "spec": {
-    "api_definition_refs": [{"name": "arcadia-finance", "namespace": "my-ns", "tenant": "my-tenant"}],
+    "api_definition_refs": [{"name": "arcadia-finance", "namespace": "shared", "tenant": "my-tenant"}],
     "enable_api_discovery": {}
   }
 }
@@ -223,31 +240,20 @@ GET/POST  /api/config/dns/namespaces/{ns}/dns_lb_health_checks
 ```
 `unit` values: `SECOND`, `MINUTE`, `HOUR`.
 
-**App API group — inline endpoints**:
+**App API group — inline endpoints** — use `elements` at the top level of `spec` (NOT nested under `inline_api_group`):
 ```json
 {
   "spec": {
-    "inline_api_group": {
-      "elements": [
-        {"methods": ["POST"], "path_regex": "/trading/rest/buy_stocks\\.php"}
-      ]
-    }
+    "elements": [
+      {"methods": ["POST"], "path_regex": "/trading/rest/buy_stocks.php"},
+      {"methods": ["GET"], "path_regex": "/trading/rest/portfolio.php"}
+    ]
   }
 }
 ```
+The response includes `api_endpoints_count` confirming how many endpoints were matched.
 
-**App API group — reference an API definition**:
-```json
-{
-  "spec": {
-    "api_group_ref": {
-      "api_definition_ref": {"name": "arcadia-finance", "namespace": "my-ns", "tenant": "my-tenant"}
-    }
-  }
-}
-```
-
-These patterns were validated via dry-run testing with the Arcadia Finance OpenAPI 3.0.3 spec (8 endpoints: `/api/lower_bar.php`, `/api/side_bar.php`, `/api/side_bar_accounts.php`, `/trading/rest/portfolio.php`, `/trading/rest/buy_stocks.php`, `/trading/rest/sell_stocks.php`, `/trading/transactions.php`, `/api/rest/execute_money_transfer.php`).
+Live-tested with Arcadia Finance spec (8 endpoints): `/api/lower_bar.php`, `/api/side_bar.php`, `/api/side_bar_accounts.php`, `/trading/rest/portfolio.php`, `/trading/rest/buy_stocks.php`, `/trading/rest/sell_stocks.php`, `/trading/transactions.php`, `/api/rest/execute_money_transfer.php`.
 
 ### TCP Load Balancers
 

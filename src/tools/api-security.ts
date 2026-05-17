@@ -35,6 +35,110 @@ function truncate(text: string): string {
 
 export function registerApiSecurityTools(server: McpServer, client: F5XcClient, config: AppConfig): void {
 
+  // ── Swagger / OpenAPI File Upload (Object Store) ──────────────────────────
+
+  server.registerTool(
+    "xc_upload_swagger_spec",
+    {
+      title: "Upload Swagger/OpenAPI Spec to F5 XC Object Store",
+      description: `Upload an OpenAPI/Swagger spec file to the F5 XC object store so it can be referenced by an API definition.
+
+Two-step process for API definition with uploaded spec:
+  1. Call this tool to upload the spec — get back the stored object path (e.g. /api/object_store/namespaces/shared/stored_objects/swagger/my-spec/v1-26-05-17)
+  2. Call xc_create_api_definition with spec.swagger_specs=[<stored-object-path>]
+
+IMPORTANT: api_definitions can only be created in the "shared" namespace or an application namespace — NOT in "system".
+
+Args:
+  - namespace: Object store namespace (use "shared" for shared definitions)
+  - name: Spec file name (slug format, e.g. "arcadia-finance")
+  - bytes_value: Base64-encoded OpenAPI/Swagger JSON or YAML content
+  - content_format: Content format — "json" or "yaml"
+  - description: Optional description
+  - dryRun: Preview without executing`,
+      inputSchema: z.object({
+        namespace: z.string().default("shared").describe("Namespace for the stored object (use 'shared' or an app namespace — not 'system')"),
+        name: z.string().min(1).max(512).describe("Swagger spec name (slug, e.g. 'arcadia-finance')"),
+        bytes_value: z.string().describe("Base64-encoded OpenAPI/Swagger JSON or YAML"),
+        content_format: z.enum(["json", "yaml"]).default("json").describe("Content format of the spec"),
+        description: z.string().optional().describe("Optional description"),
+        ...DryRunSchema,
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ namespace, name, bytes_value, content_format, description, dryRun }) => {
+      try {
+        const result = await client.request({
+          method: "PUT",
+          path: `/api/object_store/namespaces/${encodeURIComponent(namespace)}/stored_objects/swagger/${encodeURIComponent(name)}`,
+          body: {
+            namespace,
+            object_type: "swagger",
+            name,
+            bytes_value,
+            content_format,
+            no_attributes: {},
+            ...(description ? { description } : {}),
+          },
+          dryRun,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result as Record<string, unknown> };
+      } catch (err) {
+        return { content: [{ type: "text", text: handleApiError(err) }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "xc_list_swagger_specs",
+    {
+      title: "List Swagger/OpenAPI Specs in F5 XC Object Store",
+      description: "List uploaded swagger/OpenAPI spec files in a namespace's object store. Returns name, version, and URL for each file.",
+      inputSchema: z.object({
+        namespace: z.string().default("shared").describe("Namespace to list swagger specs from (usually 'shared')"),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async ({ namespace }) => {
+      try {
+        const result = await client.request({
+          method: "GET",
+          path: `/api/object_store/namespaces/${encodeURIComponent(namespace)}/stored_objects/swagger`,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result as Record<string, unknown> };
+      } catch (err) {
+        return { content: [{ type: "text", text: handleApiError(err) }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "xc_delete_swagger_spec",
+    {
+      title: "Delete Swagger/OpenAPI Spec from F5 XC Object Store",
+      description: "Delete a specific version of a swagger spec from the object store. Detach it from any API definitions first.",
+      inputSchema: z.object({
+        namespace: z.string().default("shared").describe("Namespace containing the swagger spec"),
+        name: z.string().min(1).describe("Swagger spec name"),
+        version: z.string().min(1).describe("Version string (e.g. 'v1-26-05-17')"),
+        ...DryRunSchema,
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ namespace, name, version, dryRun }) => {
+      try {
+        const result = await client.request({
+          method: "DELETE",
+          path: `/api/object_store/namespaces/${encodeURIComponent(namespace)}/stored_objects/swagger/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
+          dryRun,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result as Record<string, unknown> };
+      } catch (err) {
+        return { content: [{ type: "text", text: handleApiError(err) }] };
+      }
+    },
+  );
+
   // ── API Definitions (API Discovery / API Inventory) ───────────────────────
 
   server.registerTool(
@@ -89,19 +193,20 @@ export function registerApiSecurityTools(server: McpServer, client: F5XcClient, 
       title: "Create F5 XC API Definition",
       description: `Create an API definition to enable API Discovery and/or API Security on an HTTP load balancer.
 
-Args:
-  - namespace: Target namespace
-  - name: API definition name
-  - spec: API definition spec. Example to enable discovery from traffic learning:
+NAMESPACE RESTRICTION: api_definitions can only be created in "shared" or an application namespace — NOT in "system" (returns 400).
+
+To upload an OpenAPI spec and create an API definition:
+  1. First upload the spec with xc_upload_swagger_spec — get back the stored object path.
+  2. Then call this tool with spec.swagger_specs=[<stored-object-path>]:
       {
-        "swagger_specs": [],
-        "learn_from_redirect_traffic": true
+        "swagger_specs": ["/api/object_store/namespaces/shared/stored_objects/swagger/my-spec/v1-26-05-17"]
       }
-  To upload an OpenAPI spec file (base64-encoded):
-      {
-        "swagger_specs": [{"spec_as_bytes": "<base64-encoded-openapi-json>"}]
-      }
-  Attach to HTTP LB via "api_definition_refs" (array) in the HTTP LB spec:
+  NOTE: swagger_specs takes object store paths as strings, NOT base64 content directly.
+
+To enable discovery from traffic learning (no uploaded spec):
+      {"swagger_specs": [], "learn_from_redirect_traffic": true}
+
+Attach to HTTP LB via "api_definition_refs" (array) in the HTTP LB spec:
       {
         "api_definition_refs": [{"name": "<api-def-name>", "namespace": "<ns>", "tenant": "<tenant>"}],
         "enable_api_discovery": {}
@@ -238,18 +343,15 @@ Args:
 Args:
   - namespace: Target namespace
   - name: Group name
-  - spec: App API group spec. Example:
+  - spec: App API group spec. Use "elements" at the top level of spec (NOT nested under "inline_api_group"):
       {
-        "inline_api_group": {
-          "elements": [
-            {"methods": ["GET","POST"], "path_regex": "/api/v1/users.*"}
-          ]
-        }
+        "elements": [
+          {"methods": ["GET","POST"], "path_regex": "/api/v1/users.*"},
+          {"methods": ["POST"], "path_regex": "/trading/rest/buy_stocks.php"}
+        ]
       }
-  Or reference an API definition:
-      {
-        "api_group_ref": {"api_definition_ref": {"name": "my-api-def", "namespace": "my-ns"}}
-      }
+  The "methods" array accepts HTTP method strings: GET, POST, PUT, DELETE, PATCH, etc.
+  The "path_regex" is a regular expression matched against the request path.
   - dryRun: Preview without executing`,
       inputSchema: z.object({
         namespace: z.string().default(config.defaultNamespace).describe("Namespace for the app API group"),
@@ -288,10 +390,12 @@ F5 XC API base path examples:
   - /api/config/namespaces/{ns}/origin_pools — origin pools
   - /api/config/namespaces/{ns}/app_firewalls — WAF policies
   - /api/config/namespaces/{ns}/service_policies — service policies
-  - /api/config/namespaces/{ns}/api_definitions — API definitions
+  - /api/config/namespaces/{ns}/api_definitions — API definitions (shared/app ns only, not system)
   - /api/config/namespaces/{ns}/app_api_groups — API endpoint groups
   - /api/config/namespaces/{ns}/web_app_scanners — Web App Scanning configs
   - /api/config/namespaces/{ns}/tcp_loadbalancers — TCP LBs
+  - /api/object_store/namespaces/{ns}/stored_objects/swagger — list swagger specs
+  - /api/object_store/namespaces/{ns}/stored_objects/swagger/{name} — PUT to upload swagger spec
 
 Common UC-4 patterns (use PUT on the HTTP LB to modify):
   - Attach API definition: set spec.api_definition_refs=[{name,namespace,tenant}] and spec.enable_api_discovery={}
