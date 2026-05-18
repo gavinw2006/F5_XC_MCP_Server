@@ -21,7 +21,7 @@ F5 XC API reference: https://docs.cloud.f5.com/docs-v2/api
 | UC-5 | DNS Management — primary and secondary DNS zones (system namespace only), A/CNAME records via `default_rr_set_group`, NS delegation to `ns1/ns2.f5clouddns.com` ✓ Live tested |
 | UC-6 | Web Application Scanning (DAST) — separate SaaS API at `app.heyhack.com`, requires `F5_XC_WAS_API_KEY` env var (not the standard XC API token). Findings, scan jobs, recon. |
 | UC-7 | DNS Load Balancing / GSLB — `dns_load_balancers`, `dns_lb_pools`, `dns_lb_health_checks` under `/api/config/dns/` base path ✓ Live tested (list) |
-| UC-8 | Observability / Synthetic Monitoring — HTTP/DNS health check monitors (`healthchecks`), alert policies (`alert_policys`), alert receivers ✓ Live tested |
+| UC-8 | Observability / Synthetic Monitoring — standalone HTTP and DNS synthetic monitors (`v1_http_monitors`, `v1_dns_monitors`) probing from F5 XC PoP or cloud regions, alert policies (`alert_policys`), alert receivers ✓ Live tested |
 | UC-9 | Customer Edge (CE) lifecycle — registration tokens, site list/status/delete, Terraform HCL generation for Azure/AWS/GCP CE deployment ✓ Live tested |
 
 ## Architecture (planned)
@@ -158,15 +158,72 @@ GET/POST  /api/config/dns/namespaces/{ns}/dns_lb_health_checks
 - Reference a DNS LB from a DNS zone record to enable GSLB.
 - `spec.rule_list` is required and must have at least one rule entry.
 
-### Health Checks / Synthetic Monitoring (UC-8)
+### Synthetic Monitors (UC-8)
 
-- Health checks: `/api/config/namespaces/{ns}/healthchecks`
-- **Alert policies quirk**: endpoint spells it `alert_policys` (not `alert_policies`):
+**Synthetic monitors are a separate resource from origin pool health checks.** The two APIs are completely distinct:
+
+| Resource | API path | Purpose |
+|---|---|---|
+| Synthetic monitors (UC-8) | `/api/observability/synthetic_monitor/namespaces/{ns}/v1_http_monitors` | Standalone probes from F5 XC PoPs — NOT attached to origin pools |
+| Synthetic DNS monitors | `/api/observability/synthetic_monitor/namespaces/{ns}/v1_dns_monitors` | DNS resolution probes from F5 XC PoPs |
+| Origin pool health checks | `/api/config/namespaces/{ns}/healthchecks` | Backend health probes attached to origin pools |
+
+**HTTP monitor spec** (live-tested 2026-05-18):
+```json
+{
+  "metadata": {"name": "...", "namespace": "..."},
+  "spec": {
+    "url": "https://www.example.com",
+    "get": {},
+    "interval_1_min": {},
+    "request_headers": [],
+    "on_failure_count": 2,
+    "receive": "",
+    "ignore_cert_errors": false,
+    "follow_redirects": false,
+    "response_timeout": 10000,
+    "external_sources": [{"f5xc": {"regions": ["ves-io-melbourne"]}}],
+    "source_critical_threshold": 1,
+    "sni_host": "",
+    "response_codes": ["2**", "3**"],
+    "health_policy": {"dynamic_threshold_disabled": {}, "static_max_threshold_disabled": {}, "static_min_threshold_disabled": {}}
+  }
+}
+```
+
+**DNS monitor spec** (live-tested 2026-05-18):
+```json
+{
+  "metadata": {"name": "...", "namespace": "..."},
+  "spec": {
+    "domain": "www.example.com",
+    "record_type": "A",
+    "protocol": "TCP",
+    "interval_1_min": {},
+    "on_failure_to_any": {},
+    "on_failure_count": 2,
+    "lookup_timeout": 5000,
+    "source_critical_threshold": 1,
+    "name_servers": [],
+    "external_sources": [{"aws": {"regions": ["ap-southeast-1"]}}],
+    "receive": "",
+    "health_policy": {"dynamic_threshold_disabled": {}, "static_max_threshold_disabled": {}, "static_min_threshold_disabled": {}}
+  }
+}
+```
+
+**Key field notes:**
+- `interval_*`: presence-based oneOf key — `interval_30_sec`, `interval_1_min`, `interval_5_min`, `interval_10_min`, `interval_30_min`, `interval_1_hour`
+- `http_method`: presence-based oneOf — `get: {}` or `post: {}`
+- `external_sources`: array of `{provider: {regions: [...]}}` — provider key is `f5xc`, `aws`, `gcp`, or `azure`. F5 XC region names use `ves-io-` prefix (e.g. `ves-io-melbourne`).
+- `response_codes`: glob patterns — `"2**"` matches any 2xx, `"200"` matches exactly 200
+- `response_timeout` and `lookup_timeout`: in **milliseconds** (not seconds)
+- `on_failure_to_any: {}`: DNS monitor fails if ANY source fails (alternative: `on_failure_to_all`)
+
+**Alert policies quirk**: endpoint spells it `alert_policys` (not `alert_policies`):
   `GET/POST /api/config/namespaces/{ns}/alert_policys`
-- Alert receivers (separate notification target objects): `/api/config/namespaces/{ns}/alert_receivers`
-- Health check spec quirk: `host_header` and `use_origin_server_name` are **mutually exclusive** — do not set both. Use `host_header` when you want to probe a specific hostname.
-- Health check `spec` uses `http_health_check` or `dns_health_check` as the probe type key.
-- Monitors are referenced by origin pools for backend health — same objects used for synthetic monitoring.
+
+Alert receivers (separate notification target objects): `/api/config/namespaces/{ns}/alert_receivers`
 
 ### Customer Edge Registration (UC-9)
 

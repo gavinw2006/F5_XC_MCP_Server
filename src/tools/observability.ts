@@ -4,13 +4,21 @@ import type { AppConfig } from "../types.js";
 import { F5XcClient, handleApiError } from "../services/f5-xc-client.js";
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, CHARACTER_LIMIT } from "../constants.js";
 
-// F5 XC Health Checks (origin pool probes and standalone synthetic monitors):
-//   /api/config/namespaces/{ns}/healthchecks
+// F5 XC Synthetic Monitor API (Observability):
+//   HTTP monitors: /api/observability/synthetic_monitor/namespaces/{ns}/v1_http_monitors
+//   DNS monitors:  /api/observability/synthetic_monitor/namespaces/{ns}/v1_dns_monitors
+//
+// These are standalone synthetic probes that run from F5 XC PoP locations or cloud
+// provider regions — NOT the healthcheck probes used by origin pools
+// (those live at /api/config/namespaces/{ns}/healthchecks).
+//
 // Alert policies (API quirk: endpoint spells "alert_policys" not "alert_policies"):
 //   /api/config/namespaces/{ns}/alert_policys
 // Alert receivers (notification targets: email, Slack, PagerDuty):
 //   /api/config/namespaces/{ns}/alert_receivers
-// Health check spec quirk: host_header and use_origin_server_name are mutually exclusive.
+
+const BASE_HTTP = "/api/observability/synthetic_monitor/namespaces";
+const BASE_DNS = "/api/observability/synthetic_monitor/namespaces";
 
 const PaginationSchema = {
   page_start: z.number().int().min(0).default(0).describe("Pagination offset"),
@@ -36,6 +44,24 @@ function buildMetadata(params: { name: string; namespace: string; description?: 
   };
 }
 
+// Build the external_sources array from a probe_source + regions pair.
+// source: "f5xc" | "aws" | "gcp" | "azure"
+// regions: array of region strings, e.g. ["ves-io-melbourne"] or ["ap-southeast-1"]
+function buildExternalSources(probeSource: string, probeRegions: string[]): unknown[] {
+  return [{ [probeSource]: { regions: probeRegions } }];
+}
+
+// Build the interval key. F5 XC uses presence-based oneOf: interval_30_sec, interval_1_min,
+// interval_5_min, interval_10_min, interval_30_min, interval_1_hour
+function buildInterval(intervalMinutes: number): Record<string, unknown> {
+  if (intervalMinutes <= 0.5) return { interval_30_sec: {} };
+  if (intervalMinutes <= 1) return { interval_1_min: {} };
+  if (intervalMinutes <= 5) return { interval_5_min: {} };
+  if (intervalMinutes <= 10) return { interval_10_min: {} };
+  if (intervalMinutes <= 30) return { interval_30_min: {} };
+  return { interval_1_hour: {} };
+}
+
 function truncate(text: string): string {
   if (text.length <= CHARACTER_LIMIT) return text;
   return text.slice(0, CHARACTER_LIMIT) + `\n\n[Truncated. Use page_start/page_limit to paginate.]`;
@@ -43,24 +69,26 @@ function truncate(text: string): string {
 
 export function registerObservabilityTools(server: McpServer, client: F5XcClient, config: AppConfig): void {
 
-  // ── Health Checks / Synthetic Monitors ────────────────────────────────────
+  // ── HTTP Synthetic Monitors ────────────────────────────────────────────────
 
   server.registerTool(
     "xc_list_monitors",
     {
-      title: "List F5 XC Health Check Monitors",
-      description: "List health check monitors (synthetic monitors) in a namespace. Monitors are used by origin pools to probe backend health and by standalone synthetic monitoring.",
+      title: "List F5 XC Synthetic Monitors",
+      description: "List synthetic monitors in a namespace. Use monitor_type to select HTTP or DNS monitors. Synthetic monitors send probes from F5 XC PoP locations to external targets — they are NOT the same as origin pool health checks.",
       inputSchema: z.object({
         namespace: z.string().default(config.defaultNamespace).describe("Namespace to list monitors from"),
+        monitor_type: z.enum(["http", "dns"]).default("http").describe("Monitor type: http or dns"),
         ...PaginationSchema,
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
-    async ({ namespace, page_start, page_limit }) => {
+    async ({ namespace, monitor_type, page_start, page_limit }) => {
       try {
+        const resource = monitor_type === "dns" ? "v1_dns_monitors" : "v1_http_monitors";
         const result = await client.request({
           method: "GET",
-          path: `/api/config/namespaces/${encodeURIComponent(namespace)}/healthchecks`,
+          path: `${BASE_HTTP}/${encodeURIComponent(namespace)}/${resource}`,
           query: { page_start, page_limit },
         });
         return { content: [{ type: "text", text: truncate(JSON.stringify(result, null, 2)) }], structuredContent: result as Record<string, unknown> };
@@ -73,17 +101,22 @@ export function registerObservabilityTools(server: McpServer, client: F5XcClient
   server.registerTool(
     "xc_get_monitor",
     {
-      title: "Get F5 XC Health Check Monitor",
-      description: "Get the full specification of a health check monitor, including probe type (HTTP/HTTPS/TCP/DNS), interval, timeout, and expected response.",
+      title: "Get F5 XC Synthetic Monitor",
+      description: "Get the full specification of a synthetic monitor (HTTP or DNS). Includes probe locations, check intervals, and response assertions.",
       inputSchema: z.object({
         namespace: z.string().default(config.defaultNamespace).describe("Namespace containing the monitor"),
         name: z.string().min(1).describe("Monitor name"),
+        monitor_type: z.enum(["http", "dns"]).default("http").describe("Monitor type: http or dns"),
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
-    async ({ namespace, name }) => {
+    async ({ namespace, name, monitor_type }) => {
       try {
-        const result = await client.request({ method: "GET", path: `/api/config/namespaces/${encodeURIComponent(namespace)}/healthchecks/${encodeURIComponent(name)}` });
+        const resource = monitor_type === "dns" ? "v1_dns_monitors" : "v1_http_monitors";
+        const result = await client.request({
+          method: "GET",
+          path: `${BASE_HTTP}/${encodeURIComponent(namespace)}/${resource}/${encodeURIComponent(name)}`,
+        });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result as Record<string, unknown> };
       } catch (err) {
         return { content: [{ type: "text", text: handleApiError(err) }] };
@@ -95,52 +128,72 @@ export function registerObservabilityTools(server: McpServer, client: F5XcClient
     "xc_create_monitor_http",
     {
       title: "Create F5 XC HTTP Synthetic Monitor",
-      description: `Create an HTTP or HTTPS health check monitor. Can be attached to origin pools or used standalone for synthetic monitoring.
+      description: `Create an HTTP/HTTPS synthetic monitor that probes a URL from F5 XC PoP locations or cloud regions.
 
-Args:
-  - namespace: Target namespace
-  - name: Monitor name
-  - host: Target hostname or IP to probe
-  - port: Port to probe (e.g. 80 for HTTP, 443 for HTTPS)
-  - path: HTTP path to request (default: /)
-  - use_https: Whether to use HTTPS (default: false)
-  - expected_status: Expected HTTP status code (default: 200)
-  - interval_seconds: Probe interval in seconds (default: 15)
-  - timeout_seconds: Probe timeout in seconds (default: 10)
-  - dryRun: Preview without executing`,
+Probe sources:
+  - probe_source: "f5xc" → use F5 XC PoP region names like "ves-io-melbourne", "ves-io-singapore"
+  - probe_source: "aws" → use AWS region names like "ap-southeast-1", "us-east-1"
+  - probe_source: "gcp" / "azure" → use their respective region names
+
+Key spec fields:
+  - url: Full URL including scheme, e.g. "https://www.example.com/health"
+  - http_method: "get" (default) or "post"
+  - response_codes: List of glob patterns, e.g. ["2**", "3**"] (default)
+  - response_timeout_ms: Timeout in milliseconds (default: 10000)
+  - interval_minutes: Check interval — 0.5 (30s), 1, 5, 10, 30, or 60 (default: 1)
+  - on_failure_count: Consecutive failures before alerting (default: 2)
+  - source_critical_threshold: How many sources must fail to trigger alert (default: 1)
+  - ignore_cert_errors: Skip TLS certificate validation (default: false)
+  - follow_redirects: Follow HTTP redirects (default: false)
+  - sni_host: Override SNI hostname for TLS
+  - receive: Expected response body substring (empty = any body)
+  - request_headers: List of {name, value} header objects`,
       inputSchema: z.object({
         namespace: z.string().default(config.defaultNamespace).describe("Namespace for the monitor"),
         ...MetadataSchema,
-        host: z.string().min(1).describe("Target hostname or IP address to probe"),
-        port: z.number().int().min(1).max(65535).describe("TCP port to probe"),
-        path: z.string().default("/").describe("HTTP path to request"),
-        use_https: z.boolean().default(false).describe("Use HTTPS instead of HTTP"),
-        expected_status: z.number().int().min(100).max(599).default(200).describe("Expected HTTP status code"),
-        interval_seconds: z.number().int().min(5).max(3600).default(15).describe("Probe interval in seconds"),
-        timeout_seconds: z.number().int().min(1).max(60).default(10).describe("Probe timeout in seconds"),
+        url: z.string().url().describe("Full URL to probe, e.g. https://www.example.com/health"),
+        http_method: z.enum(["get", "post"]).default("get").describe("HTTP method to use"),
+        response_codes: z.array(z.string()).default(["2**", "3**"]).describe("Expected response code patterns, e.g. [\"2**\", \"3**\"] or [\"200\"]"),
+        response_timeout_ms: z.number().int().min(1000).max(60000).default(10000).describe("Response timeout in milliseconds"),
+        interval_minutes: z.number().default(1).describe("Check interval: 0.5 (30s), 1, 5, 10, 30, or 60 minutes"),
+        on_failure_count: z.number().int().min(1).max(10).default(2).describe("Consecutive failures before alerting"),
+        source_critical_threshold: z.number().int().min(1).default(1).describe("Number of probe sources that must fail to trigger alert"),
+        ignore_cert_errors: z.boolean().default(false).describe("Skip TLS certificate validation"),
+        follow_redirects: z.boolean().default(false).describe("Follow HTTP redirects"),
+        sni_host: z.string().optional().describe("Override SNI hostname for TLS connections"),
+        receive: z.string().optional().describe("Expected response body substring (empty = any body)"),
+        request_headers: z.array(z.object({ name: z.string(), value: z.string() })).optional().describe("HTTP request headers"),
+        probe_source: z.enum(["f5xc", "aws", "gcp", "azure"]).default("f5xc").describe("Cloud/PoP provider to send probes from"),
+        probe_regions: z.array(z.string()).default(["ves-io-melbourne"]).describe("Probe source regions, e.g. [\"ves-io-melbourne\"] for F5 XC or [\"ap-southeast-1\"] for AWS"),
         ...DryRunSchema,
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    async ({ namespace, name, description, labels, host, port, path, use_https, expected_status, interval_seconds, timeout_seconds, dryRun }) => {
+    async ({ namespace, name, description, labels, url, http_method, response_codes, response_timeout_ms, interval_minutes, on_failure_count, source_critical_threshold, ignore_cert_errors, follow_redirects, sni_host, receive, request_headers, probe_source, probe_regions, dryRun }) => {
       try {
-        // host_header and use_origin_server_name are mutually exclusive — only set host_header
         const spec: Record<string, unknown> = {
-          http_health_check: {
-            host_header: host,
-            path,
-            ...(use_https ? { use_https: { use_host_header_as_sni: {} } } : {}),
-            expected_status_codes: [String(expected_status)],
+          url,
+          [http_method]: {},
+          ...buildInterval(interval_minutes),
+          request_headers: request_headers ?? [],
+          on_failure_count,
+          receive: receive ?? "",
+          ignore_cert_errors,
+          follow_redirects,
+          response_timeout: response_timeout_ms,
+          external_sources: buildExternalSources(probe_source, probe_regions),
+          source_critical_threshold,
+          sni_host: sni_host ?? "",
+          response_codes,
+          health_policy: {
+            dynamic_threshold_disabled: {},
+            static_max_threshold_disabled: {},
+            static_min_threshold_disabled: {},
           },
-          interval: interval_seconds,
-          timeout: timeout_seconds,
-          healthy_threshold: 1,
-          unhealthy_threshold: 3,
-          port,
         };
         const result = await client.request({
           method: "POST",
-          path: `/api/config/namespaces/${encodeURIComponent(namespace)}/healthchecks`,
+          path: `${BASE_HTTP}/${encodeURIComponent(namespace)}/v1_http_monitors`,
           body: { metadata: buildMetadata({ name, namespace, description, labels }), spec },
           dryRun,
         });
@@ -155,46 +208,59 @@ Args:
     "xc_create_monitor_dns",
     {
       title: "Create F5 XC DNS Synthetic Monitor",
-      description: `Create a DNS health check monitor to probe whether a nameserver resolves a domain correctly.
+      description: `Create a DNS synthetic monitor that probes DNS resolution from F5 XC PoP locations or cloud regions.
 
-Args:
-  - namespace: Target namespace
-  - name: Monitor name
-  - dns_server: DNS server IP to query
-  - query_name: Domain name to resolve (e.g. example.com)
-  - expected_ip: Expected IP address in the DNS response (optional — if omitted, any response counts)
-  - interval_seconds: Probe interval (default: 30)
-  - timeout_seconds: Probe timeout (default: 10)
-  - dryRun: Preview without executing`,
+Key spec fields:
+  - domain: Domain name to resolve, e.g. "www.example.com"
+  - record_type: "A" (default), "AAAA", "CNAME", "MX", "TXT", "NS"
+  - protocol: "TCP" (default) or "UDP"
+  - name_servers: Optional list of specific nameserver IPs to query (empty = use system resolvers)
+  - lookup_timeout_ms: DNS lookup timeout in milliseconds (default: 5000)
+  - interval_minutes: Check interval — 0.5, 1, 5, 10, 30, or 60 minutes (default: 1)
+  - on_failure_count: Consecutive failures before alerting (default: 2)
+  - probe_source: "f5xc", "aws", "gcp", or "azure"
+  - probe_regions: Region names matching the probe_source provider`,
       inputSchema: z.object({
         namespace: z.string().default(config.defaultNamespace).describe("Namespace for the monitor"),
         ...MetadataSchema,
-        dns_server: z.string().min(1).describe("DNS server IP to query"),
-        query_name: z.string().min(1).describe("Domain name to resolve"),
-        expected_ip: z.string().optional().describe("Expected IP address in DNS response"),
-        interval_seconds: z.number().int().min(5).max(3600).default(30).describe("Probe interval in seconds"),
-        timeout_seconds: z.number().int().min(1).max(60).default(10).describe("Probe timeout in seconds"),
+        domain: z.string().min(1).describe("Domain name to resolve, e.g. www.example.com"),
+        record_type: z.enum(["A", "AAAA", "CNAME", "MX", "TXT", "NS"]).default("A").describe("DNS record type to query"),
+        protocol: z.enum(["TCP", "UDP"]).default("TCP").describe("Transport protocol for DNS queries"),
+        name_servers: z.array(z.string()).optional().describe("Specific nameserver IPs to query (empty = system resolvers)"),
+        lookup_timeout_ms: z.number().int().min(1000).max(30000).default(5000).describe("DNS lookup timeout in milliseconds"),
+        interval_minutes: z.number().default(1).describe("Check interval: 0.5 (30s), 1, 5, 10, 30, or 60 minutes"),
+        on_failure_count: z.number().int().min(1).max(10).default(2).describe("Consecutive failures before alerting"),
+        source_critical_threshold: z.number().int().min(1).default(1).describe("Number of probe sources that must fail to trigger alert"),
+        receive: z.string().optional().describe("Expected value in DNS response (empty = any valid response)"),
+        probe_source: z.enum(["f5xc", "aws", "gcp", "azure"]).default("f5xc").describe("Cloud/PoP provider to send probes from"),
+        probe_regions: z.array(z.string()).default(["ves-io-melbourne"]).describe("Probe source regions"),
         ...DryRunSchema,
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    async ({ namespace, name, description, labels, dns_server, query_name, expected_ip, interval_seconds, timeout_seconds, dryRun }) => {
+    async ({ namespace, name, description, labels, domain, record_type, protocol, name_servers, lookup_timeout_ms, interval_minutes, on_failure_count, source_critical_threshold, receive, probe_source, probe_regions, dryRun }) => {
       try {
         const spec: Record<string, unknown> = {
-          dns_health_check: {
-            query_name,
-            ...(expected_ip ? { expected_ip } : {}),
+          domain,
+          record_type,
+          protocol,
+          ...buildInterval(interval_minutes),
+          on_failure_to_any: {},
+          on_failure_count,
+          lookup_timeout: lookup_timeout_ms,
+          source_critical_threshold,
+          name_servers: name_servers ?? [],
+          external_sources: buildExternalSources(probe_source, probe_regions),
+          receive: receive ?? "",
+          health_policy: {
+            dynamic_threshold_disabled: {},
+            static_max_threshold_disabled: {},
+            static_min_threshold_disabled: {},
           },
-          interval: interval_seconds,
-          timeout: timeout_seconds,
-          healthy_threshold: 1,
-          unhealthy_threshold: 3,
-          port: 53,
-          host_header: dns_server,
         };
         const result = await client.request({
           method: "POST",
-          path: `/api/config/namespaces/${encodeURIComponent(namespace)}/healthchecks`,
+          path: `${BASE_DNS}/${encodeURIComponent(namespace)}/v1_dns_monitors`,
           body: { metadata: buildMetadata({ name, namespace, description, labels }), spec },
           dryRun,
         });
@@ -208,21 +274,23 @@ Args:
   server.registerTool(
     "xc_update_monitor",
     {
-      title: "Update F5 XC Health Check Monitor",
-      description: "Replace a health check monitor's full specification (PUT). Retrieve the current spec with xc_get_monitor first.",
+      title: "Update F5 XC Synthetic Monitor",
+      description: "Replace a synthetic monitor's full specification (PUT). Retrieve the current spec with xc_get_monitor first, then submit the modified spec.",
       inputSchema: z.object({
         namespace: z.string().default(config.defaultNamespace).describe("Namespace containing the monitor"),
         ...MetadataSchema,
+        monitor_type: z.enum(["http", "dns"]).default("http").describe("Monitor type: http or dns"),
         spec: z.record(z.unknown()).describe("New complete monitor spec"),
         ...DryRunSchema,
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
-    async ({ namespace, name, description, labels, spec, dryRun }) => {
+    async ({ namespace, name, description, labels, monitor_type, spec, dryRun }) => {
       try {
+        const resource = monitor_type === "dns" ? "v1_dns_monitors" : "v1_http_monitors";
         const result = await client.request({
           method: "PUT",
-          path: `/api/config/namespaces/${encodeURIComponent(namespace)}/healthchecks/${encodeURIComponent(name)}`,
+          path: `${BASE_HTTP}/${encodeURIComponent(namespace)}/${resource}/${encodeURIComponent(name)}`,
           body: { metadata: buildMetadata({ name, namespace, description, labels }), spec },
           dryRun,
         });
@@ -236,18 +304,24 @@ Args:
   server.registerTool(
     "xc_delete_monitor",
     {
-      title: "Delete F5 XC Health Check Monitor",
-      description: "Delete a health check monitor. Remove it from any origin pool references first.",
+      title: "Delete F5 XC Synthetic Monitor",
+      description: "Delete a synthetic monitor (HTTP or DNS). Specify monitor_type to target the correct resource type.",
       inputSchema: z.object({
         namespace: z.string().default(config.defaultNamespace).describe("Namespace containing the monitor"),
         name: z.string().min(1).describe("Monitor name to delete"),
+        monitor_type: z.enum(["http", "dns"]).default("http").describe("Monitor type: http or dns"),
         ...DryRunSchema,
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
-    async ({ namespace, name, dryRun }) => {
+    async ({ namespace, name, monitor_type, dryRun }) => {
       try {
-        const result = await client.request({ method: "DELETE", path: `/api/config/namespaces/${encodeURIComponent(namespace)}/healthchecks/${encodeURIComponent(name)}`, dryRun });
+        const resource = monitor_type === "dns" ? "v1_dns_monitors" : "v1_http_monitors";
+        const result = await client.request({
+          method: "DELETE",
+          path: `${BASE_HTTP}/${encodeURIComponent(namespace)}/${resource}/${encodeURIComponent(name)}`,
+          dryRun,
+        });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result as Record<string, unknown> };
       } catch (err) {
         return { content: [{ type: "text", text: handleApiError(err) }] };
@@ -349,7 +423,7 @@ Args:
     "xc_delete_alert_policy",
     {
       title: "Delete F5 XC Alert Policy",
-      description: "Delete an alert policy. Ensure no monitors or health checks reference it first.",
+      description: "Delete an alert policy. Ensure no monitors reference it first.",
       inputSchema: z.object({
         namespace: z.string().default(config.defaultNamespace).describe("Namespace containing the alert policy"),
         name: z.string().min(1).describe("Alert policy name to delete"),

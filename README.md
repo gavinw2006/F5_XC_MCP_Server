@@ -15,7 +15,7 @@ F5 XC API reference: https://docs.cloud.f5.com/docs-v2/api
 | UC-5 | DNS Management — primary and secondary zones, A/CNAME records, NS delegation to F5 XC |
 | UC-6 | Web Application Scanning (DAST) — findings, scan jobs, recon (separate API at app.heyhack.com, requires `F5_XC_WAS_API_KEY`) |
 | UC-7 | DNS Load Balancing / GSLB — weighted, geographic, and failover routing (under `/api/config/dns/` base path) |
-| UC-8 | Observability / Synthetic Monitoring — HTTP/DNS health checks, alert policies (`alert_policys`), alert receivers |
+| UC-8 | Observability / Synthetic Monitoring — standalone HTTP and DNS synthetic monitors probing from F5 XC PoP or cloud regions (`v1_http_monitors`, `v1_dns_monitors`), alert policies, alert receivers |
 | UC-9 | Customer Edge (CE) — registration tokens, site lifecycle, Terraform HCL for Azure/AWS/GCP |
 | TF | Terraform fallback — generate & apply HCL for any F5 XC resource |
 

@@ -39,11 +39,31 @@ type: project
 - Pool priority: priority 1 is tried before priority 2 (failover)
 - Must reference pools by name/namespace/tenant object ref
 
-## Health Checks / Observability (UC-8)
-- API path: `/api/config/namespaces/{ns}/healthchecks`
-- Alert policies: `/api/config/namespaces/{ns}/alert_policies`
-- Probe type is a key in spec: `http_health_check` or `dns_health_check`
-- Same healthcheck objects reused by both origin pools and standalone synthetic monitoring
+## Synthetic Monitors / Observability (UC-8) — LIVE TESTED 2026-05-18
+
+**CRITICAL**: Synthetic monitors use a DIFFERENT API than origin pool health checks.
+
+- HTTP synthetic monitors: `GET/POST /api/observability/synthetic_monitor/namespaces/{ns}/v1_http_monitors`
+- DNS synthetic monitors: `GET/POST /api/observability/synthetic_monitor/namespaces/{ns}/v1_dns_monitors`
+- GET/PUT/DELETE individual: `…/{resource}/{name}`
+- Origin pool health checks (NOT synthetic monitors): `/api/config/namespaces/{ns}/healthchecks`
+- Alert policies (quirk: spells "alert_policys"): `/api/config/namespaces/{ns}/alert_policys`
+- Alert receivers: `/api/config/namespaces/{ns}/alert_receivers`
+
+HTTP monitor spec keys:
+- `url`: full URL including scheme
+- `get: {}` or `post: {}` — HTTP method (oneOf)
+- `interval_1_min: {}` (or interval_30_sec, interval_5_min, etc.) — check interval (oneOf)
+- `response_timeout`: in milliseconds (NOT seconds)
+- `external_sources: [{provider: {regions: [...]}}]` — provider: f5xc, aws, gcp, azure
+- F5 XC PoP regions use `ves-io-` prefix: `ves-io-melbourne`, `ves-io-singapore`, etc.
+- `response_codes: ["2**", "3**"]` — glob patterns
+
+DNS monitor spec keys:
+- `domain`, `record_type` (A/AAAA/CNAME/MX/TXT/NS), `protocol` (TCP/UDP)
+- `lookup_timeout`: in milliseconds
+- `name_servers: []` — empty = use system resolvers
+- `on_failure_to_any: {}` or `on_failure_to_all: {}` — failure routing (oneOf)
 
 ## Customer Edge (UC-9)
 - Registration tokens: POST `/api/register/namespaces/system/tokens` body: `{"name": "label"}`
